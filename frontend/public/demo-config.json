@@ -1,0 +1,14 @@
+{
+  "source": {
+    "ewsUrl": "http://mv.lingxioffice.top:13444/ews/exchange.asmx",
+    "email": "test001@wy.lingxioffice.top",
+    "password": "Test@1633"
+  },
+  "target": {
+    "imapHost": "imap.qiye.163.com",
+    "imapPort": 993,
+    "imapSsl": true,
+    "email": "jinshan@elysys.net",
+    "password": "Qiyetest1"
+  }
+}

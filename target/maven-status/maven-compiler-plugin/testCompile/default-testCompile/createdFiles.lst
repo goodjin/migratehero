@@ -1,0 +1,5 @@
+com/migratehero/transform/CalendarTransformerTest.class
+com/migratehero/service/CheckpointServiceTest.class
+com/migratehero/transform/ContactTransformerTest.class
+com/migratehero/transform/EmailTransformerTest.class
+com/migratehero/controller/AuthControllerTest.class
