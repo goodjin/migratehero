@@ -18,6 +18,13 @@ export interface MvpMigrationRequest {
   targetImapSsl: boolean;
   targetEmail: string;
   targetPassword: string;
+  // 迁移类型选项
+  migrateEmails?: boolean;
+  migrateCalendar?: boolean;
+  migrateContacts?: boolean;
+  // CalDAV/CardDAV 配置（可选，默认从 IMAP 主机推断）
+  targetCalDavUrl?: string;
+  targetCardDavUrl?: string;
 }
 
 export interface TestConnectionRequest {
@@ -34,13 +41,25 @@ export interface MvpTask {
   id: number;
   sourceEmail: string;
   targetEmail: string;
-  status: 'DRAFT' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  status: 'DRAFT' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'COMPLETED_WITH_ERRORS' | 'FAILED' | 'CANCELLED';
   progressPercent: number;
   totalFolders: number;
   migratedFolders: number;
   totalEmails: number;
   migratedEmails: number;
   failedEmails: number;
+  // 日历统计
+  totalCalendarEvents: number;
+  migratedCalendarEvents: number;
+  failedCalendarEvents: number;
+  // 联系人统计
+  totalContacts: number;
+  migratedContacts: number;
+  failedContacts: number;
+  // 迁移类型
+  migrateEmails: boolean;
+  migrateCalendar: boolean;
+  migrateContacts: boolean;
   currentFolder: string | null;
   errorMessage: string | null;
   failedEndpoint: string | null;

@@ -43,6 +43,7 @@ const MvpHomePage: React.FC = () => {
       RUNNING: 'bg-blue-100 text-blue-700 animate-pulse',
       PAUSED: 'bg-yellow-100 text-yellow-700',
       COMPLETED: 'bg-green-100 text-green-700',
+      COMPLETED_WITH_ERRORS: 'bg-orange-100 text-orange-700',
       FAILED: 'bg-red-100 text-red-700',
       CANCELLED: 'bg-gray-100 text-gray-500',
     };
@@ -51,6 +52,7 @@ const MvpHomePage: React.FC = () => {
       RUNNING: '迁移中',
       PAUSED: '已暂停',
       COMPLETED: '已完成',
+      COMPLETED_WITH_ERRORS: '部分失败',
       FAILED: '失败',
       CANCELLED: '已取消',
     };
@@ -234,6 +236,7 @@ const MvpHomePage: React.FC = () => {
                           <div
                             className={`h-2 rounded-full ${
                               task.status === 'FAILED' ? 'bg-red-500' :
+                              task.status === 'COMPLETED_WITH_ERRORS' ? 'bg-orange-500' :
                               task.status === 'COMPLETED' ? 'bg-green-500' : 'bg-blue-500'
                             }`}
                             style={{ width: `${task.progressPercent}%` }}
@@ -307,7 +310,7 @@ const MvpHomePage: React.FC = () => {
                             </button>
                           </>
                         )}
-                        {task.status === 'FAILED' && (
+                        {(task.status === 'FAILED' || task.status === 'COMPLETED_WITH_ERRORS') && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -315,10 +318,10 @@ const MvpHomePage: React.FC = () => {
                             }}
                             className="text-green-600 hover:text-green-800 text-sm font-medium"
                           >
-                            重试
+                            重试失败项
                           </button>
                         )}
-                        {(task.status === 'DRAFT' || task.status === 'PAUSED' || task.status === 'FAILED') && (
+                        {(task.status === 'DRAFT' || task.status === 'PAUSED' || task.status === 'FAILED' || task.status === 'COMPLETED_WITH_ERRORS') && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

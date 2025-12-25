@@ -1,14 +1,22 @@
 package com.migratehero.service;
 
 import com.migratehero.model.MvpFolderProgress;
+import com.migratehero.model.MvpMigratedCalendarEvent;
+import com.migratehero.model.MvpMigratedContact;
 import com.migratehero.model.MvpMigratedEmail;
 import com.migratehero.model.MvpMigrationTask;
 import com.migratehero.model.enums.MigrationStatus;
 import com.migratehero.repository.MvpFolderProgressRepository;
+import com.migratehero.repository.MvpMigratedCalendarEventRepository;
+import com.migratehero.repository.MvpMigratedContactRepository;
 import com.migratehero.repository.MvpMigratedEmailRepository;
 import com.migratehero.repository.MvpMigrationTaskRepository;
+import com.migratehero.service.connector.caldav.CalDavConnector;
+import com.migratehero.service.connector.carddav.CardDavConnector;
 import com.migratehero.service.connector.ews.MvpEwsConnector;
 import com.migratehero.service.connector.imap.ImapConnector;
+import com.migratehero.service.transform.MvpCalendarTransformer;
+import com.migratehero.service.transform.MvpContactTransformer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -33,8 +41,14 @@ public class MvpMigrationService {
     private final MvpMigrationTaskRepository taskRepository;
     private final MvpFolderProgressRepository folderProgressRepository;
     private final MvpMigratedEmailRepository migratedEmailRepository;
+    private final MvpMigratedCalendarEventRepository calendarEventRepository;
+    private final MvpMigratedContactRepository contactRepository;
     private final MvpEwsConnector ewsConnector;
     private final ImapConnector imapConnector;
+    private final CalDavConnector calDavConnector;
+    private final CardDavConnector cardDavConnector;
+    private final MvpCalendarTransformer calendarTransformer;
+    private final MvpContactTransformer contactTransformer;
     private final SimpMessagingTemplate messagingTemplate;
 
     private static final int BATCH_SIZE = 10;
@@ -92,6 +106,7 @@ public class MvpMigrationService {
     public boolean hasActiveTask(String sourceEmail) {
         List<MigrationStatus> completedStatuses = List.of(
                 MigrationStatus.COMPLETED,
+                MigrationStatus.COMPLETED_WITH_ERRORS,
                 MigrationStatus.FAILED,
                 MigrationStatus.CANCELLED
         );
@@ -206,16 +221,45 @@ public class MvpMigrationService {
                 broadcastProgress(task);
             }
 
-            // 4. 完成
-            task.setStatus(MigrationStatus.COMPLETED);
+            // 4. 迁移日历事件
+            if (Boolean.TRUE.equals(task.getMigrateCalendar())) {
+                task.setCurrentFolder("日历");
+                taskRepository.save(task);
+                broadcastProgress(task);
+                migrateCalendar(task);
+            }
+
+            // 5. 迁移联系人
+            if (Boolean.TRUE.equals(task.getMigrateContacts())) {
+                task.setCurrentFolder("联系人");
+                taskRepository.save(task);
+                broadcastProgress(task);
+                migrateContacts(task);
+            }
+
+            // 6. 完成 - 检查是否有失败项
+            boolean hasFailures = (task.getFailedEmails() != null && task.getFailedEmails() > 0)
+                    || (task.getFailedCalendarEvents() != null && task.getFailedCalendarEvents() > 0)
+                    || (task.getFailedContacts() != null && task.getFailedContacts() > 0);
+
+            if (hasFailures) {
+                task.setStatus(MigrationStatus.COMPLETED_WITH_ERRORS);
+                log.warn("Migration completed with errors. Failed: emails={}, calendar={}, contacts={}",
+                        task.getFailedEmails(), task.getFailedCalendarEvents(), task.getFailedContacts());
+            } else {
+                task.setStatus(MigrationStatus.COMPLETED);
+            }
             task.setCompletedAt(Instant.now());
             task.setCurrentFolder(null);
             task.setProgressPercent(100);
             taskRepository.save(task);
             broadcastProgress(task);
 
-            log.info("Migration completed. Total: {}, Migrated: {}, Failed: {}",
-                    totalEmails, migratedEmails, failedEmails);
+            log.info("Migration {}. Emails: {}/{}, Calendar: {}/{}, Contacts: {}/{}",
+                    hasFailures ? "completed with errors" : "completed",
+                    task.getMigratedEmails(), task.getTotalEmails(),
+                    task.getMigratedCalendarEvents(), task.getTotalCalendarEvents(),
+                    task.getMigratedContacts(), task.getTotalContacts());
 
         } catch (Exception e) {
             log.error("Migration failed: {}", e.getMessage(), e);
@@ -233,6 +277,9 @@ public class MvpMigrationService {
     private MigrationResult migrateFolder(MvpMigrationTask task, MvpEwsConnector.FolderInfo folder) {
         MigrationResult result = new MigrationResult();
         int offset = 0;
+
+        // 收集本次迁移中看到的所有邮件 ID（用于清理已删除邮件的失败记录）
+        java.util.Set<String> seenEmailIds = new java.util.HashSet<>();
 
         updateFolderStatus(task.getId(), folder.getName(), "in_progress");
 
@@ -256,6 +303,9 @@ public class MvpMigrationService {
                 List<String> emailIds = emailList.getEmails().stream()
                         .map(MvpEwsConnector.EmailInfo::getId)
                         .toList();
+
+                // 记录看到的邮件 ID（用于后续清理不存在的失败记录）
+                seenEmailIds.addAll(emailIds);
 
                 List<MvpEwsConnector.EmailMimeData> mimeDataList = ewsConnector.getEmailsMimeContent(
                         task.getSourceEwsUrl(),
@@ -301,10 +351,14 @@ public class MvpMigrationService {
                                 mimeData.getMimeContent()
                         );
 
+                        // 如果之前有失败记录，先删除（用于重试成功的情况）
+                        migratedEmailRepository.deleteByTaskIdAndSourceEmailId(task.getId(), mimeData.getEmailId());
+
                         MvpMigratedEmail record = createMigratedEmailRecord(
                                 task.getId(), mimeData, folder.getName(), true, null);
                         migratedEmailRepository.save(record);
                         result.success++;
+                        log.debug("Email migrated successfully: {}", mimeData.getSubject());
                     } catch (Exception e) {
                         recordEmailFailure(task, folder.getName(), mimeData.getEmailId(),
                                 mimeData.getSubject(), mimeData.getFromAddress(), mimeData.getReceivedDate(),
@@ -342,6 +396,9 @@ public class MvpMigrationService {
                     break;
                 }
             }
+
+            // 清理不存在的失败记录（源邮件已被删除/移动）
+            cleanupOrphanedFailedRecords(task.getId(), folder.getName(), seenEmailIds);
 
             updateFolderStatus(task.getId(), folder.getName(), "completed");
 
@@ -397,11 +454,37 @@ public class MvpMigrationService {
     }
 
     /**
+     * 清理不存在的失败记录（源邮件已被删除或移动到其他文件夹）
+     */
+    private void cleanupOrphanedFailedRecords(Long taskId, String folderName, java.util.Set<String> seenEmailIds) {
+        List<MvpMigratedEmail> failedRecords = migratedEmailRepository.findByTaskIdAndFolderNameAndSuccess(
+                taskId, folderName, false);
+
+        int deletedCount = 0;
+        for (MvpMigratedEmail failedRecord : failedRecords) {
+            if (!seenEmailIds.contains(failedRecord.getSourceEmailId())) {
+                // 源邮件已不存在，删除失败记录
+                migratedEmailRepository.delete(failedRecord);
+                deletedCount++;
+                log.info("Deleted orphaned failed record: {} (source email no longer exists)",
+                        failedRecord.getSourceEmailId());
+            }
+        }
+
+        if (deletedCount > 0) {
+            log.info("Cleaned up {} orphaned failed records in folder {}", deletedCount, folderName);
+        }
+    }
+
+    /**
      * 记录邮件迁移失败
      */
     private void recordEmailFailure(MvpMigrationTask task, String folderName, String emailId,
                                   String subject, String fromAddress, Instant sentDate, Long sizeBytes,
                                   String errorMessage, MigrationResult result) {
+        // 先删除旧的失败记录（如果存在），避免重复记录
+        migratedEmailRepository.deleteByTaskIdAndSourceEmailId(task.getId(), emailId);
+
         MvpMigratedEmail record = createMigratedEmailRecord(
                 task.getId(), emailId, subject, fromAddress, sentDate, sizeBytes, folderName,
                 false, truncate(errorMessage, 1000));
@@ -546,6 +629,14 @@ public class MvpMigrationService {
             progress.put("failedEmails", task.getFailedEmails());
             progress.put("currentFolder", task.getCurrentFolder());
             progress.put("errorMessage", task.getErrorMessage());
+            // 日历进度
+            progress.put("totalCalendarEvents", task.getTotalCalendarEvents());
+            progress.put("migratedCalendarEvents", task.getMigratedCalendarEvents());
+            progress.put("failedCalendarEvents", task.getFailedCalendarEvents());
+            // 联系人进度
+            progress.put("totalContacts", task.getTotalContacts());
+            progress.put("migratedContacts", task.getMigratedContacts());
+            progress.put("failedContacts", task.getFailedContacts());
 
             messagingTemplate.convertAndSend("/topic/migration/" + task.getId() + "/progress", progress);
         } catch (Exception e) {
@@ -556,6 +647,281 @@ public class MvpMigrationService {
     private String truncate(String str, int maxLength) {
         if (str == null) return null;
         return str.length() > maxLength ? str.substring(0, maxLength) : str;
+    }
+
+    // ==================== 日历迁移 ====================
+
+    /**
+     * 迁移日历事件
+     */
+    private void migrateCalendar(MvpMigrationTask task) {
+        log.info("Starting calendar migration for task {}", task.getId());
+
+        try {
+            // 获取日历信息
+            MvpEwsConnector.CalendarInfo calendarInfo = ewsConnector.getCalendarInfo(
+                    task.getSourceEwsUrl(),
+                    task.getSourceEmail(),
+                    task.getSourcePassword()
+            );
+
+            task.setTotalCalendarEvents((long) calendarInfo.getTotalCount());
+            taskRepository.save(task);
+            broadcastProgress(task);
+
+            if (calendarInfo.getTotalCount() == 0) {
+                log.info("No calendar events to migrate");
+                return;
+            }
+
+            // 推断或使用配置的 CalDAV URL
+            String calDavUrl = task.getTargetCalDavUrl();
+            if (calDavUrl == null || calDavUrl.isEmpty()) {
+                calDavUrl = calDavConnector.inferCalDavUrl(task.getTargetImapHost(), task.getTargetEmail());
+            }
+
+            if (calDavUrl == null) {
+                log.warn("CalDAV URL not available, skipping calendar migration");
+                return;
+            }
+
+            // 分批获取并迁移日历事件
+            int offset = 0;
+            long migratedEvents = 0;
+            long failedEvents = 0;
+
+            while (true) {
+                MvpEwsConnector.CalendarEventListResult eventList = ewsConnector.listCalendarEvents(
+                        task.getSourceEwsUrl(),
+                        task.getSourceEmail(),
+                        task.getSourcePassword(),
+                        offset,
+                        BATCH_SIZE
+                );
+
+                if (eventList.getEvents().isEmpty()) {
+                    break;
+                }
+
+                for (MvpEwsConnector.CalendarEventInfo eventInfo : eventList.getEvents()) {
+                    // 检查是否已迁移
+                    if (calendarEventRepository.existsByTaskIdAndSourceEventIdAndSuccess(
+                            task.getId(), eventInfo.getId(), true)) {
+                        continue;
+                    }
+
+                    try {
+                        // 获取事件详情
+                        MvpEwsConnector.CalendarEventDetail eventDetail = ewsConnector.getCalendarEventDetail(
+                                task.getSourceEwsUrl(),
+                                task.getSourceEmail(),
+                                task.getSourcePassword(),
+                                eventInfo.getId()
+                        );
+
+                        // 转换为 iCalendar 格式
+                        String iCalData = calendarTransformer.toICalendar(eventDetail);
+
+                        // 上传到目标
+                        String targetEventId = calDavConnector.createEvent(
+                                calDavUrl,
+                                task.getTargetEmail(),
+                                task.getTargetPassword(),
+                                iCalData
+                        );
+
+                        // 记录成功
+                        MvpMigratedCalendarEvent record = MvpMigratedCalendarEvent.builder()
+                                .taskId(task.getId())
+                                .sourceEventId(eventInfo.getId())
+                                .calendarName(calendarInfo.getName())
+                                .subject(truncate(eventInfo.getSubject(), 500))
+                                .location(truncate(eventInfo.getLocation(), 1000))
+                                .startTime(eventInfo.getStartTime())
+                                .endTime(eventInfo.getEndTime())
+                                .isAllDay(eventInfo.isAllDay())
+                                .organizer(eventInfo.getOrganizer())
+                                .success(true)
+                                .targetEventId(targetEventId)
+                                .build();
+                        calendarEventRepository.save(record);
+                        migratedEvents++;
+
+                    } catch (Exception e) {
+                        log.warn("Failed to migrate calendar event {}: {}", eventInfo.getId(), e.getMessage());
+                        MvpMigratedCalendarEvent record = MvpMigratedCalendarEvent.builder()
+                                .taskId(task.getId())
+                                .sourceEventId(eventInfo.getId())
+                                .calendarName(calendarInfo.getName())
+                                .subject(truncate(eventInfo.getSubject(), 500))
+                                .startTime(eventInfo.getStartTime())
+                                .endTime(eventInfo.getEndTime())
+                                .success(false)
+                                .errorMessage(truncate(e.getMessage(), 1000))
+                                .build();
+                        calendarEventRepository.save(record);
+                        failedEvents++;
+                    }
+
+                    // 更新进度
+                    task.setMigratedCalendarEvents(migratedEvents);
+                    task.setFailedCalendarEvents(failedEvents);
+                    taskRepository.save(task);
+
+                    if ((migratedEvents + failedEvents) % 10 == 0) {
+                        broadcastProgress(task);
+                    }
+                }
+
+                offset += BATCH_SIZE;
+                if (!eventList.isHasMore()) {
+                    break;
+                }
+            }
+
+            log.info("Calendar migration completed. Migrated: {}, Failed: {}", migratedEvents, failedEvents);
+
+        } catch (Exception e) {
+            log.error("Calendar migration failed: {}", e.getMessage(), e);
+            task.setErrorMessage("Calendar migration failed: " + e.getMessage());
+            taskRepository.save(task);
+        }
+    }
+
+    // ==================== 联系人迁移 ====================
+
+    /**
+     * 迁移联系人
+     */
+    private void migrateContacts(MvpMigrationTask task) {
+        log.info("Starting contacts migration for task {}", task.getId());
+
+        try {
+            // 获取联系人文件夹信息
+            MvpEwsConnector.ContactFolderInfo contactFolder = ewsConnector.getContactFolderInfo(
+                    task.getSourceEwsUrl(),
+                    task.getSourceEmail(),
+                    task.getSourcePassword()
+            );
+
+            task.setTotalContacts((long) contactFolder.getTotalCount());
+            taskRepository.save(task);
+            broadcastProgress(task);
+
+            if (contactFolder.getTotalCount() == 0) {
+                log.info("No contacts to migrate");
+                return;
+            }
+
+            // 推断或使用配置的 CardDAV URL
+            String cardDavUrl = task.getTargetCardDavUrl();
+            if (cardDavUrl == null || cardDavUrl.isEmpty()) {
+                cardDavUrl = cardDavConnector.inferCardDavUrl(task.getTargetImapHost(), task.getTargetEmail());
+            }
+
+            if (cardDavUrl == null) {
+                log.warn("CardDAV URL not available, skipping contacts migration");
+                return;
+            }
+
+            // 分批获取并迁移联系人
+            int offset = 0;
+            long migratedContacts = 0;
+            long failedContacts = 0;
+
+            while (true) {
+                MvpEwsConnector.ContactListResult contactList = ewsConnector.listContacts(
+                        task.getSourceEwsUrl(),
+                        task.getSourceEmail(),
+                        task.getSourcePassword(),
+                        offset,
+                        BATCH_SIZE
+                );
+
+                if (contactList.getContacts().isEmpty()) {
+                    break;
+                }
+
+                for (MvpEwsConnector.ContactInfo contactInfo : contactList.getContacts()) {
+                    // 检查是否已迁移
+                    if (contactRepository.existsByTaskIdAndSourceContactIdAndSuccess(
+                            task.getId(), contactInfo.getId(), true)) {
+                        continue;
+                    }
+
+                    try {
+                        // 获取联系人详情
+                        MvpEwsConnector.ContactDetail contactDetail = ewsConnector.getContactDetail(
+                                task.getSourceEwsUrl(),
+                                task.getSourceEmail(),
+                                task.getSourcePassword(),
+                                contactInfo.getId()
+                        );
+
+                        // 转换为 vCard 格式
+                        String vCardData = contactTransformer.toVCard(contactDetail);
+
+                        // 上传到目标
+                        String targetContactId = cardDavConnector.createContact(
+                                cardDavUrl,
+                                task.getTargetEmail(),
+                                task.getTargetPassword(),
+                                vCardData
+                        );
+
+                        // 记录成功
+                        MvpMigratedContact record = MvpMigratedContact.builder()
+                                .taskId(task.getId())
+                                .sourceContactId(contactInfo.getId())
+                                .folderName(contactFolder.getName())
+                                .displayName(truncate(contactInfo.getDisplayName(), 200))
+                                .firstName(truncate(contactInfo.getFirstName(), 100))
+                                .lastName(truncate(contactInfo.getLastName(), 100))
+                                .company(truncate(contactInfo.getCompany(), 200))
+                                .jobTitle(truncate(contactInfo.getJobTitle(), 100))
+                                .success(true)
+                                .targetContactId(targetContactId)
+                                .build();
+                        contactRepository.save(record);
+                        migratedContacts++;
+
+                    } catch (Exception e) {
+                        log.warn("Failed to migrate contact {}: {}", contactInfo.getId(), e.getMessage());
+                        MvpMigratedContact record = MvpMigratedContact.builder()
+                                .taskId(task.getId())
+                                .sourceContactId(contactInfo.getId())
+                                .folderName(contactFolder.getName())
+                                .displayName(truncate(contactInfo.getDisplayName(), 200))
+                                .success(false)
+                                .errorMessage(truncate(e.getMessage(), 1000))
+                                .build();
+                        contactRepository.save(record);
+                        failedContacts++;
+                    }
+
+                    // 更新进度
+                    task.setMigratedContacts(migratedContacts);
+                    task.setFailedContacts(failedContacts);
+                    taskRepository.save(task);
+
+                    if ((migratedContacts + failedContacts) % 10 == 0) {
+                        broadcastProgress(task);
+                    }
+                }
+
+                offset += BATCH_SIZE;
+                if (!contactList.isHasMore()) {
+                    break;
+                }
+            }
+
+            log.info("Contacts migration completed. Migrated: {}, Failed: {}", migratedContacts, failedContacts);
+
+        } catch (Exception e) {
+            log.error("Contacts migration failed: {}", e.getMessage(), e);
+            task.setErrorMessage("Contacts migration failed: " + e.getMessage());
+            taskRepository.save(task);
+        }
     }
 
     private static class MigrationResult {

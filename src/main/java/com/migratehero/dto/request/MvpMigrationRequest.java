@@ -40,4 +40,16 @@ public class MvpMigrationRequest {
 
     @NotBlank(message = "Target password is required")
     private String targetPassword;
+
+    // === 迁移类型控制 ===
+    private Boolean migrateEmails = true;
+
+    private Boolean migrateCalendar = false;
+
+    private Boolean migrateContacts = false;
+
+    // === 目标端 CalDAV/CardDAV 配置（可选，默认从 IMAP 主机推断） ===
+    private String targetCalDavUrl;
+
+    private String targetCardDavUrl;
 }

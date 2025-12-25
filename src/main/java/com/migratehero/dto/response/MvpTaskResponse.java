@@ -24,6 +24,22 @@ public class MvpTaskResponse {
     private Long totalEmails;
     private Long migratedEmails;
     private Long failedEmails;
+
+    // === 日历统计 ===
+    private Long totalCalendarEvents;
+    private Long migratedCalendarEvents;
+    private Long failedCalendarEvents;
+
+    // === 联系人统计 ===
+    private Long totalContacts;
+    private Long migratedContacts;
+    private Long failedContacts;
+
+    // === 迁移类型 ===
+    private Boolean migrateEmails;
+    private Boolean migrateCalendar;
+    private Boolean migrateContacts;
+
     private String currentFolder;
     private String errorMessage;
     private String failedEndpoint;
@@ -49,6 +65,18 @@ public class MvpTaskResponse {
                 .totalEmails(task.getTotalEmails())
                 .migratedEmails(task.getMigratedEmails())
                 .failedEmails(task.getFailedEmails())
+                // 日历统计
+                .totalCalendarEvents(task.getTotalCalendarEvents())
+                .migratedCalendarEvents(task.getMigratedCalendarEvents())
+                .failedCalendarEvents(task.getFailedCalendarEvents())
+                // 联系人统计
+                .totalContacts(task.getTotalContacts())
+                .migratedContacts(task.getMigratedContacts())
+                .failedContacts(task.getFailedContacts())
+                // 迁移类型
+                .migrateEmails(task.getMigrateEmails())
+                .migrateCalendar(task.getMigrateCalendar())
+                .migrateContacts(task.getMigrateContacts())
                 .currentFolder(task.getCurrentFolder())
                 .errorMessage(task.getErrorMessage())
                 .failedEndpoint(task.getFailedEndpoint())

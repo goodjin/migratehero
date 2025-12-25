@@ -109,6 +109,13 @@ public class MvpMigrationController {
                 .targetImapSsl(request.getTargetImapSsl())
                 .targetEmail(request.getTargetEmail())
                 .targetPassword(request.getTargetPassword())
+                // 迁移类型
+                .migrateEmails(request.getMigrateEmails() != null ? request.getMigrateEmails() : true)
+                .migrateCalendar(request.getMigrateCalendar() != null ? request.getMigrateCalendar() : false)
+                .migrateContacts(request.getMigrateContacts() != null ? request.getMigrateContacts() : false)
+                // CalDAV/CardDAV 配置
+                .targetCalDavUrl(request.getTargetCalDavUrl())
+                .targetCardDavUrl(request.getTargetCardDavUrl())
                 .build();
 
         MvpMigrationTask saved = migrationService.createTask(task);
@@ -130,6 +137,13 @@ public class MvpMigrationController {
                     .targetImapSsl(request.getTargetImapSsl())
                     .targetEmail(request.getTargetEmail())
                     .targetPassword(request.getTargetPassword())
+                    // 迁移类型
+                    .migrateEmails(request.getMigrateEmails() != null ? request.getMigrateEmails() : true)
+                    .migrateCalendar(request.getMigrateCalendar() != null ? request.getMigrateCalendar() : false)
+                    .migrateContacts(request.getMigrateContacts() != null ? request.getMigrateContacts() : false)
+                    // CalDAV/CardDAV 配置
+                    .targetCalDavUrl(request.getTargetCalDavUrl())
+                    .targetCardDavUrl(request.getTargetCardDavUrl())
                     .build();
 
             MvpMigrationTask updated = migrationService.updateTask(taskId, task);
@@ -239,12 +253,13 @@ public class MvpMigrationController {
             MvpMigrationTask task = migrationService.getTask(taskId)
                     .orElseThrow(() -> new RuntimeException("Task not found"));
 
-            // 允许删除 DRAFT、PAUSED 和 FAILED 状态的任务
+            // 允许删除 DRAFT、PAUSED、FAILED 和 COMPLETED_WITH_ERRORS 状态的任务
             if (task.getStatus() != MigrationStatus.DRAFT
                 && task.getStatus() != MigrationStatus.PAUSED
-                && task.getStatus() != MigrationStatus.FAILED) {
+                && task.getStatus() != MigrationStatus.FAILED
+                && task.getStatus() != MigrationStatus.COMPLETED_WITH_ERRORS) {
                 result.put("success", false);
-                result.put("message", "只能删除草稿、已暂停或失败状态的任务");
+                result.put("message", "只能删除草稿、已暂停、失败或部分失败状态的任务");
                 return ResponseEntity.badRequest().body(result);
             }
 
@@ -299,10 +314,11 @@ public class MvpMigrationController {
             MvpMigrationTask task = migrationService.getTask(taskId)
                     .orElseThrow(() -> new RuntimeException("Task not found"));
 
-            // 只允许重试 FAILED 状态的任务
-            if (task.getStatus() != MigrationStatus.FAILED) {
+            // 允许重试 FAILED 或 COMPLETED_WITH_ERRORS 状态的任务
+            if (task.getStatus() != MigrationStatus.FAILED
+                && task.getStatus() != MigrationStatus.COMPLETED_WITH_ERRORS) {
                 result.put("success", false);
-                result.put("message", "只能重试失败状态的任务");
+                result.put("message", "只能重试失败或部分失败状态的任务");
                 return ResponseEntity.badRequest().body(result);
             }
 

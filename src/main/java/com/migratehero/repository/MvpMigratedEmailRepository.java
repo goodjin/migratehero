@@ -33,4 +33,18 @@ public interface MvpMigratedEmailRepository extends JpaRepository<MvpMigratedEma
     @Modifying
     @Transactional
     void deleteByTaskId(@Param("taskId") Long taskId);
+
+    // 查找失败记录（用于重试时更新）
+    java.util.Optional<MvpMigratedEmail> findByTaskIdAndSourceEmailIdAndSuccess(Long taskId, String sourceEmailId, Boolean success);
+
+    // 删除特定邮件的失败记录（当源邮件不存在时）
+    @Modifying
+    @Transactional
+    void deleteByTaskIdAndSourceEmailId(Long taskId, String sourceEmailId);
+
+    // 查找任务的所有失败记录
+    List<MvpMigratedEmail> findByTaskIdAndSuccess(Long taskId, Boolean success);
+
+    // 查找特定文件夹的失败记录
+    List<MvpMigratedEmail> findByTaskIdAndFolderNameAndSuccess(Long taskId, String folderName, Boolean success);
 }

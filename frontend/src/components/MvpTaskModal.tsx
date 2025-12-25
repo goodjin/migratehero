@@ -58,6 +58,10 @@ const MvpTaskModal: React.FC<Props> = ({ onClose, onCreated, task }) => {
     targetImapSsl: task?.targetImapSsl ?? true,
     targetEmail: task?.targetEmail || '',
     targetPassword: task?.targetPassword || '',
+    // 迁移类型选项
+    migrateEmails: task?.migrateEmails ?? true,
+    migrateCalendar: task?.migrateCalendar ?? false,
+    migrateContacts: task?.migrateContacts ?? false,
   });
 
   // Load demo config on mount
@@ -354,6 +358,53 @@ const MvpTaskModal: React.FC<Props> = ({ onClose, onCreated, task }) => {
                   </span>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Migration Type Options */}
+          <div className="bg-purple-50 rounded-lg p-4">
+            <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+              <span className="w-6 h-6 bg-purple-500 text-white rounded-full flex items-center justify-center text-sm">3</span>
+              迁移内容选择
+            </h3>
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="migrateEmails"
+                    checked={formData.migrateEmails}
+                    onChange={handleChange}
+                    className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                  />
+                  <span className="text-sm text-gray-700">邮件</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="migrateCalendar"
+                    checked={formData.migrateCalendar}
+                    onChange={handleChange}
+                    className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                  />
+                  <span className="text-sm text-gray-700">日历 (CalDAV)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="migrateContacts"
+                    checked={formData.migrateContacts}
+                    onChange={handleChange}
+                    className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                  />
+                  <span className="text-sm text-gray-700">联系人 (CardDAV)</span>
+                </label>
+              </div>
+              {(formData.migrateCalendar || formData.migrateContacts) && (
+                <p className="text-xs text-gray-500 mt-2">
+                  日历和联系人将通过 CalDAV/CardDAV 协议写入目标服务器。如果目标服务器不支持这些协议，相关数据将被跳过。
+                </p>
+              )}
             </div>
           </div>
 

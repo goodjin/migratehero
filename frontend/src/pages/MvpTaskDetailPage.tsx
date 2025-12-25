@@ -66,6 +66,7 @@ const MvpTaskDetailPage: React.FC = () => {
       DRAFT: 'bg-gray-100 text-gray-700',
       RUNNING: 'bg-blue-100 text-blue-700',
       COMPLETED: 'bg-green-100 text-green-700',
+      COMPLETED_WITH_ERRORS: 'bg-orange-100 text-orange-700',
       FAILED: 'bg-red-100 text-red-700',
       pending: 'bg-gray-100 text-gray-600',
       in_progress: 'bg-blue-100 text-blue-700',
@@ -140,8 +141,10 @@ const MvpTaskDetailPage: React.FC = () => {
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusBadge(task.status)}`}>
               {task.status === 'RUNNING' && '迁移中'}
               {task.status === 'COMPLETED' && '已完成'}
+              {task.status === 'COMPLETED_WITH_ERRORS' && '部分失败'}
               {task.status === 'FAILED' && '失败'}
               {task.status === 'DRAFT' && '待开始'}
+              {task.status === 'PAUSED' && '已暂停'}
             </span>
           </div>
 
@@ -158,6 +161,7 @@ const MvpTaskDetailPage: React.FC = () => {
               <div
                 className={`h-2 rounded-full transition-all ${
                   task.status === 'FAILED' ? 'bg-red-500' :
+                  task.status === 'COMPLETED_WITH_ERRORS' ? 'bg-orange-500' :
                   task.status === 'COMPLETED' ? 'bg-green-500' : 'bg-blue-500'
                 }`}
                 style={{ width: `${task.progressPercent}%` }}
@@ -167,6 +171,58 @@ const MvpTaskDetailPage: React.FC = () => {
               <p className="text-xs text-gray-500 mt-1">正在迁移: {task.currentFolder}</p>
             )}
           </div>
+
+          {/* Calendar & Contacts Progress */}
+          {(task.migrateCalendar || task.migrateContacts) && (
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              {task.migrateCalendar && (
+                <div className="bg-purple-50 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-purple-800">日历事件</span>
+                    <span className="text-xs text-purple-600">
+                      {task.migratedCalendarEvents}/{task.totalCalendarEvents}
+                      {task.failedCalendarEvents > 0 && (
+                        <span className="text-red-500 ml-1">({task.failedCalendarEvents} 失败)</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="w-full bg-purple-200 rounded-full h-1.5">
+                    <div
+                      className="h-1.5 rounded-full bg-purple-500 transition-all"
+                      style={{
+                        width: `${task.totalCalendarEvents > 0
+                          ? Math.round((task.migratedCalendarEvents / task.totalCalendarEvents) * 100)
+                          : 0}%`
+                      }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+              {task.migrateContacts && (
+                <div className="bg-pink-50 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-pink-800">联系人</span>
+                    <span className="text-xs text-pink-600">
+                      {task.migratedContacts}/{task.totalContacts}
+                      {task.failedContacts > 0 && (
+                        <span className="text-red-500 ml-1">({task.failedContacts} 失败)</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="w-full bg-pink-200 rounded-full h-1.5">
+                    <div
+                      className="h-1.5 rounded-full bg-pink-500 transition-all"
+                      style={{
+                        width: `${task.totalContacts > 0
+                          ? Math.round((task.migratedContacts / task.totalContacts) * 100)
+                          : 0}%`
+                      }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Error Details */}
           {task.status === 'FAILED' && task.errorMessage && (
@@ -325,8 +381,19 @@ const MvpTaskDetailPage: React.FC = () => {
                             <div className="text-sm text-gray-900 truncate max-w-md" title={email.subject}>
                               {email.subject || '(无主题)'}
                             </div>
-                            {!email.success && email.errorMessage && (
-                              <div className="text-xs text-red-500 truncate">{email.errorMessage}</div>
+                            {!email.success && (
+                              <div className="mt-1 space-y-0.5">
+                                <div className="text-xs text-gray-500 font-mono truncate" title={email.sourceEmailId}>
+                                  ID: {email.sourceEmailId.length > 40
+                                    ? email.sourceEmailId.substring(0, 40) + '...'
+                                    : email.sourceEmailId}
+                                </div>
+                                {email.errorMessage && (
+                                  <div className="text-xs text-red-500 truncate" title={email.errorMessage}>
+                                    {email.errorMessage}
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-600 truncate" title={email.fromAddress}>
